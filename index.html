@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Countdown</title>
+  <style>
+    :root {
+      --bg: #000;
+      --fg: #fff;
+      --font: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    body{
+      margin:0;
+      background:var(--bg);
+      color:var(--fg);
+      font-family:var(--font);
+      display:flex;
+      flex-direction:column;
+      justify-content:center;
+      align-items:center;
+      min-height:100vh;
+      text-align:center;
+      gap:2rem;
+    }
+    #timer{
+      font-size:clamp(2rem, 8vw, 6rem);
+      letter-spacing:0.05em;
+    }
+    #text{
+      max-width:60ch;
+      line-height:1.6;
+      font-size:1.1rem;
+      opacity:.9;
+    }
+  </style>
+</head>
+<body>
+  <div id="timer">00d 00:00:00</div>
+  <div id="text">text here</div>
+
+  <script>
+    // Calculate last moment of the current month in the user's local timezone
+    function endOfThisMonth() {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth(); // 0-based
+      // First day of next month, then subtract 1 second
+      const firstNext = new Date(year, month + 1, 1, 0, 0, 0);
+      return new Date(firstNext.getTime() - 1000); // 23:59:59 of current month
+    }
+
+    const target = endOfThisMonth();
+
+    const fmt = n => String(n).padStart(2, "0");
+
+    function tickDown(){
+      let diff = target - new Date();
+      if (diff < 0) diff = 0;
+
+      const s = Math.floor(diff/1000)%60;
+      const m = Math.floor(diff/1000/60)%60;
+      const h = Math.floor(diff/1000/60/60)%24;
+      const d = Math.floor(diff/1000/60/60/24);
+
+      document.getElementById("timer").textContent =
+        `${d}d ${fmt(h)}:${fmt(m)}:${fmt(s)}`;
+    }
+
+    tickDown();
+    setInterval(tickDown, 1000);
+  </script>
+</body>
+</html>
