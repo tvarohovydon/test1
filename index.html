@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Token Leaderboard</title>
   <style>
-    /*── Full-screen black background, white text ──*/
+    /* Full-screen black background, white text */
     body {
       margin: 0;
       padding: 0;
@@ -28,7 +28,6 @@
       padding: 0;
       margin: 0;
     }
-    /* flex layout: address | amount | time */
     li {
       display: flex;
       justify-content: space-between;
@@ -40,91 +39,99 @@
     }
     .address { flex: 2; }
     .amount, .time { flex: 1; text-align: right; }
-    .time.small { font-size: 0.8rem; color: #aaa; }
+    .time { color: #aaa; font-size: 0.8rem; }
+    .loading {
+      text-align: center;
+      padding: 2rem 0;
+      color: #aaa;
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>Token Leaderboard</h1>
+    <h1>Token Holder Leaderboard</h1>
     <ul id="leaderboard">
-      <li>Loading…</li>
+      <li class="loading">Loading…</li>
     </ul>
   </div>
 
-  <!--── Day.js + relativeTime plugin for human-friendly durations ──-->
+  <!-- Day.js for time formatting -->
   <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dayjs@1/plugin/relativeTime.js"></script>
   <script>
-    // 1) Extend Day.js with the relativeTime plugin
     dayjs.extend(dayjs_plugin_relativeTime);
 
-    // ─── Configuration ────────────────────────────────────────────
-    const API_KEY = '032f3e47-295b-48be-82fb-254d7de10de3';           // ← replace with your Helius key
-    const MINT    = '7KBoZ8AmmQSTsFHWwUApN8s7teyCB4uumzCkefmabonk';       // ← replace with your token’s mint
-    // Helius JSON-RPC endpoint (mainnet)
+    // ── CONFIGURE: replace these ──
+    const API_KEY = '032f3e47-295b-48be-82fb-254d7de10de3';
+    const MINT    = 'D9JXMRovgX9hyCAqkQZTvj5Pr3rgZkNCFw8vfhxabonk';
+    // Helius RPC endpoint
     const RPC_URL = `https://mainnet.helius-rpc.com/?api-key=${API_KEY}`;
 
-    // ─── Fetch the largest token accounts ─────────────────────────
+    // ── Fetch all token accounts for this mint ──
     async function fetchHolders() {
-      try {
-        const res = await fetch(RPC_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 1,
-            method: 'getTokenLargestAccounts',
-            params: [ MINT ]
-          })
-        });
-        const json = await res.json();
-        // json.result.value is an array of { address, amount }
-        return json.result?.value || [];
-      } catch (err) {
-        console.error('Fetch error:', err);
-        return [];
-      }
+      const res = await fetch(RPC_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getTokenAccounts',
+          params: {
+            mint: MINT,
+            page: 1,
+            limit: 1000,
+            displayOptions: {}
+          }
+        })
+      });
+      const { result } = await res.json();
+      // result.token_accounts is an array of { owner, amount }
+      return result?.token_accounts || [];
     }
 
-    // ─── Render the list to the page ───────────────────────────────
-    function render(holders) {
+    // ── Render the list ──
+    function render(accounts) {
       const ul = document.getElementById('leaderboard');
-      ul.innerHTML = '';  // clear existing
+      ul.innerHTML = '';
 
-      if (holders.length === 0) {
-        ul.innerHTML = '<li>No holders found.</li>';
+      if (!accounts.length) {
+        ul.innerHTML = '<li class="loading">No holders found.</li>';
         return;
       }
 
-      // Sort by balance (largest first) as a proxy for “longest held”
-      holders.sort((a, b) => Number(b.amount) - Number(a.amount));
+      // Sum balances by owner
+      const map = {};
+      for (let a of accounts) {
+        map[a.owner] = (map[a.owner] || 0) + Number(a.amount);
+      }
+      // Convert map to array
+      const list = Object.entries(map).map(([owner, amt]) => ({
+        address: owner,
+        balance: amt
+      }));
+      // Sort by balance desc
+      list.sort((a, b) => b.balance - a.balance);
 
-      holders.forEach(h => {
-        // Convert raw amount (string) to a JS number
-        const amountNum = Number(h.amount);
-        // You may need to divide by 10^decimals for human-readable
-        const displayAmount = (amountNum / Math.pow(10, 9)).toLocaleString(); 
-        // NOTE: We don’t have first_received_at, so we default to “0 held”
-        const heldTime = '0 held';
-
+      list.forEach(h => {
+        const displayAmt = (h.balance / 1e9).toLocaleString(); // adjust decimals if needed
+        const heldTime  = '0 held'; // placeholder for now
         const li = document.createElement('li');
         li.innerHTML = `
           <span class="address">${h.address}</span>
-          <span class="amount">${displayAmount}</span>
-          <span class="time small">${heldTime}</span>
+          <span class="amount">${displayAmt}</span>
+          <span class="time">${heldTime}</span>
         `;
         ul.appendChild(li);
       });
     }
 
-    // ─── Refresh every minute ──────────────────────────────────────
+    // ── Kick off and refresh every minute ──
     async function refresh() {
-      document.getElementById('leaderboard').innerHTML = '<li>Updating…</li>';
-      const holders = await fetchHolders();
-      render(holders);
+      document.getElementById('leaderboard').innerHTML = '<li class="loading">Updating…</li>';
+      const accounts = await fetchHolders();
+      render(accounts);
     }
 
-    // Initial load + auto-refresh
     refresh();
     setInterval(refresh, 60_000);
   </script>
