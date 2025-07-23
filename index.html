@@ -5,46 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Token Leaderboard</title>
   <style>
-    /* Full-screen black background, white text */
-    body {
-      margin: 0;
-      padding: 0;
-      background: #000;
-      color: #fff;
-      font-family: sans-serif;
-    }
-    .container {
-      max-width: 600px;
-      margin: auto;
-      padding: 1rem;
-    }
-    h1 {
-      text-align: center;
-      margin-bottom: 1rem;
-      font-size: 1.5rem;
-    }
-    ul {
-      list-style: none;
-      padding: 0;
-      margin: 0;
-    }
+    body { margin:0; padding:0; background:#000; color:#fff; font-family:sans-serif; }
+    .container { max-width:700px; margin:auto; padding:1rem; }
+    h1 { text-align:center; margin-bottom:1rem; font-size:1.5rem; }
+    ul { list-style:none; padding:0; margin:0; }
     li {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 0.75rem 0;
-      border-bottom: 1px solid #444;
-      font-size: 0.9rem;
-      word-break: break-all;
+      display:flex; justify-content:space-between; align-items:center;
+      padding:.75rem 0; border-bottom:1px solid #444; font-size:.9rem;
+      word-break:break-all;
     }
-    .address { flex: 2; }
-    .amount, .time { flex: 1; text-align: right; }
-    .time { color: #aaa; font-size: 0.8rem; }
-    .loading {
-      text-align: center;
-      padding: 2rem 0;
-      color: #aaa;
-    }
+    .address { flex:2; }
+    .amount, .time { flex:1; text-align:right; }
+    .time { color:#aaa; font-size:.8rem; }
+    .loading { text-align:center; padding:2rem 0; color:#aaa; }
   </style>
 </head>
 <body>
@@ -55,83 +28,98 @@
     </ul>
   </div>
 
-  <!-- Day.js for time formatting -->
+  <!-- Day.js for relative time -->
   <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dayjs@1/plugin/relativeTime.js"></script>
   <script>
     dayjs.extend(dayjs_plugin_relativeTime);
 
-    // ── CONFIGURE: replace these ──
-    const API_KEY = '032f3e47-295b-48be-82fb-254d7de10de3';
-    const MINT    = 'D9JXMRovgX9hyCAqkQZTvj5Pr3rgZkNCFw8vfhxabonk';
-    // Helius RPC endpoint
+    // ── CONFIGURE THESE ──
+    const API_KEY = '032f3e47-295b-48be-82fb-254d7de10de3';        // ← your Helius API key
+    const MINT    = 'CZkxnM5PNPak31JSFNzJ76CWcYRu4mgxvBwcHaBJpump';    // ← your token’s mint address
     const RPC_URL = `https://mainnet.helius-rpc.com/?api-key=${API_KEY}`;
+    const TX_API  = 'https://api.helius.xyz/v0/addresses';
 
-    // ── Fetch all token accounts for this mint ──
-    async function fetchHolders() {
-      const res = await fetch(RPC_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'getTokenAccounts',
-          params: {
-            mint: MINT,
-            page: 1,
-            limit: 1000,
-            displayOptions: {}
-          }
-        })
-      });
-      const { result } = await res.json();
-      // result.token_accounts is an array of { owner, amount }
-      return result?.token_accounts || [];
+    // ── 1) Fetch ALL token accounts, paginated ──
+    async function fetchAllTokenAccounts() {
+      let page = 1, all = [];
+      while (true) {
+        const res = await fetch(RPC_URL, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            jsonrpc:'2.0', id:1, method:'getTokenAccounts',
+            params:{ mint:MINT, page, limit:1000, displayOptions:{} }
+          })
+        });
+        const { result } = await res.json();
+        const batch = result?.token_accounts || [];
+        if (batch.length === 0) break;
+        all.push(...batch);
+        page++;
+      }
+      return all; // [{owner, amount},…]
     }
 
-    // ── Render the list ──
-    function render(accounts) {
-      const ul = document.getElementById('leaderboard');
-      ul.innerHTML = '';
+    // ── 2) For a wallet, fetch its first incoming transfer timestamp ──
+    async function fetchFirstBuy(owner) {
+      const url = `${TX_API}/${owner}/transactions?api-key=${API_KEY}&limit=1000&type=TRANSFER`;
+      const res = await fetch(url);
+      const txns = await res.json();
+      const times = txns
+        .filter(t => Array.isArray(t.tokenTransfers))
+        .flatMap(t =>
+          t.tokenTransfers
+           .filter(tr => tr.tokenMint===MINT && tr.to===owner)
+           .map(tr => t.timestamp)
+        );
+      return times.length ? Math.min(...times) : Math.floor(Date.now()/1000);
+    }
 
-      if (!accounts.length) {
+    // ── 3) Aggregate, compute heldSeconds, sort, render ──
+    async function refresh() {
+      const ul = document.getElementById('leaderboard');
+      ul.innerHTML = '<li class="loading">Updating…</li>';
+
+      // 3.1 fetch and aggregate
+      const accounts = await fetchAllTokenAccounts();
+      const map = {};
+      accounts.forEach(a => {
+        map[a.owner] = (map[a.owner]||0) + Number(a.amount);
+      });
+
+      // 3.2 compute first‐buy and heldSeconds for each owner
+      const now = Math.floor(Date.now()/1000);
+      const holders = await Promise.all(
+        Object.entries(map).map(async ([owner, amount]) => {
+          const firstTs = await fetchFirstBuy(owner);
+          return {
+            address: owner,
+            balance: amount / 1e9,            // adjust if decimals ≠ 9
+            heldSeconds: now - firstTs
+          };
+        })
+      );
+
+      // 3.3 sort by heldSeconds desc & render
+      holders.sort((a,b)=>b.heldSeconds-a.heldSeconds);
+      ul.innerHTML = '';
+      if (!holders.length) {
         ul.innerHTML = '<li class="loading">No holders found.</li>';
         return;
       }
-
-      // Sum balances by owner
-      const map = {};
-      for (let a of accounts) {
-        map[a.owner] = (map[a.owner] || 0) + Number(a.amount);
-      }
-      // Convert map to array
-      const list = Object.entries(map).map(([owner, amt]) => ({
-        address: owner,
-        balance: amt
-      }));
-      // Sort by balance desc
-      list.sort((a, b) => b.balance - a.balance);
-
-      list.forEach(h => {
-        const displayAmt = (h.balance / 1e9).toLocaleString(); // adjust decimals if needed
-        const heldTime  = '0 held'; // placeholder for now
+      holders.forEach(h => {
+        const timeStr = dayjs().subtract(h.heldSeconds, 'second').fromNow(true)+' held';
         const li = document.createElement('li');
         li.innerHTML = `
           <span class="address">${h.address}</span>
-          <span class="amount">${displayAmt}</span>
-          <span class="time">${heldTime}</span>
+          <span class="amount">${h.balance.toLocaleString()}</span>
+          <span class="time">${timeStr}</span>
         `;
         ul.appendChild(li);
       });
     }
 
-    // ── Kick off and refresh every minute ──
-    async function refresh() {
-      document.getElementById('leaderboard').innerHTML = '<li class="loading">Updating…</li>';
-      const accounts = await fetchHolders();
-      render(accounts);
-    }
-
+    // initial + every minute
     refresh();
     setInterval(refresh, 60_000);
   </script>
