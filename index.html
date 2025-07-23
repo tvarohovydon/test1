@@ -2,73 +2,131 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Countdown</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Token Leaderboard</title>
   <style>
-    :root {
-      --bg: #000;
-      --fg: #fff;
-      --font: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    /*── Full-screen black background, white text ──*/
+    body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+      color: #fff;
+      font-family: sans-serif;
     }
-    body{
-      margin:0;
-      background:var(--bg);
-      color:var(--fg);
-      font-family:var(--font);
-      display:flex;
-      flex-direction:column;
-      justify-content:center;
-      align-items:center;
-      min-height:100vh;
-      text-align:center;
-      gap:2rem;
+    .container {
+      max-width: 600px;
+      margin: auto;
+      padding: 1rem;
     }
-    #timer{
-      font-size:clamp(2rem, 8vw, 6rem);
-      letter-spacing:0.05em;
+    h1 {
+      text-align: center;
+      margin-bottom: 1rem;
+      font-size: 1.5rem;
     }
-    #text{
-      max-width:60ch;
-      line-height:1.6;
-      font-size:1.1rem;
-      opacity:.9;
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
     }
+    /* flex layout: address | amount | time */
+    li {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid #444;
+      font-size: 0.9rem;
+      word-break: break-all;
+    }
+    .address { flex: 2; }
+    .amount, .time { flex: 1; text-align: right; }
+    .time.small { font-size: 0.8rem; color: #aaa; }
   </style>
 </head>
 <body>
-  <div id="timer">00d 00:00:00</div>
-  <div id="text">text here</div>
+  <div class="container">
+    <h1>Token Leaderboard</h1>
+    <ul id="leaderboard">
+      <li>Loading…</li>
+    </ul>
+  </div>
 
+  <!--── Day.js + relativeTime plugin for human-friendly durations ──-->
+  <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dayjs@1/plugin/relativeTime.js"></script>
   <script>
-    // Calculate last moment of the current month in the user's local timezone
-    function endOfThisMonth() {
-      const now = new Date();
-      const year = now.getFullYear();
-      const month = now.getMonth(); // 0-based
-      // First day of next month, then subtract 1 second
-      const firstNext = new Date(year, month + 1, 1, 0, 0, 0);
-      return new Date(firstNext.getTime() - 1000); // 23:59:59 of current month
+    // 1) Extend Day.js with the relativeTime plugin
+    dayjs.extend(dayjs_plugin_relativeTime);
+
+    // ─── Configuration ────────────────────────────────────────────
+    const API_KEY = '032f3e47-295b-48be-82fb-254d7de10de3';           // ← replace with your Helius key
+    const MINT    = 'D9JXMRovgX9hyCAqkQZTvj5Pr3rgZkNCFw8vfhxabonk';       // ← replace with your token’s mint
+    // Helius JSON-RPC endpoint (mainnet)
+    const RPC_URL = `https://mainnet.helius-rpc.com/?api-key=${API_KEY}`;
+
+    // ─── Fetch the largest token accounts ─────────────────────────
+    async function fetchHolders() {
+      try {
+        const res = await fetch(RPC_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'getTokenLargestAccounts',
+            params: [ MINT ]
+          })
+        });
+        const json = await res.json();
+        // json.result.value is an array of { address, amount }
+        return json.result?.value || [];
+      } catch (err) {
+        console.error('Fetch error:', err);
+        return [];
+      }
     }
 
-    const target = endOfThisMonth();
+    // ─── Render the list to the page ───────────────────────────────
+    function render(holders) {
+      const ul = document.getElementById('leaderboard');
+      ul.innerHTML = '';  // clear existing
 
-    const fmt = n => String(n).padStart(2, "0");
+      if (holders.length === 0) {
+        ul.innerHTML = '<li>No holders found.</li>';
+        return;
+      }
 
-    function tickDown(){
-      let diff = target - new Date();
-      if (diff < 0) diff = 0;
+      // Sort by balance (largest first) as a proxy for “longest held”
+      holders.sort((a, b) => Number(b.amount) - Number(a.amount));
 
-      const s = Math.floor(diff/1000)%60;
-      const m = Math.floor(diff/1000/60)%60;
-      const h = Math.floor(diff/1000/60/60)%24;
-      const d = Math.floor(diff/1000/60/60/24);
+      holders.forEach(h => {
+        // Convert raw amount (string) to a JS number
+        const amountNum = Number(h.amount);
+        // You may need to divide by 10^decimals for human-readable
+        const displayAmount = (amountNum / Math.pow(10, 9)).toLocaleString(); 
+        // NOTE: We don’t have first_received_at, so we default to “0 held”
+        const heldTime = '0 held';
 
-      document.getElementById("timer").textContent =
-        `${d}d ${fmt(h)}:${fmt(m)}:${fmt(s)}`;
+        const li = document.createElement('li');
+        li.innerHTML = `
+          <span class="address">${h.address}</span>
+          <span class="amount">${displayAmount}</span>
+          <span class="time small">${heldTime}</span>
+        `;
+        ul.appendChild(li);
+      });
     }
 
-    tickDown();
-    setInterval(tickDown, 1000);
+    // ─── Refresh every minute ──────────────────────────────────────
+    async function refresh() {
+      document.getElementById('leaderboard').innerHTML = '<li>Updating…</li>';
+      const holders = await fetchHolders();
+      render(holders);
+    }
+
+    // Initial load + auto-refresh
+    refresh();
+    setInterval(refresh, 60_000);
   </script>
 </body>
 </html>
